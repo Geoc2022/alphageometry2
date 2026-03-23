@@ -1,3 +1,37 @@
+# AG2 + Relational Database
+
+Here AlphaGeometry2 is used in the distributed setting with a relational database.
+
+The following demo runs `distributed_test.py` with 3 processes: 2 workers and 1 server. The workers run the prover and the server runs the test. The first test is a run of all the problems in `test.py` that the original system can already solve. The second test is a run of the auxiliary (rabbit) branches on one of the problems, so we can see how the system can be used for trying out different auxiliary points and how it can solve the problem with them.
+
+## Demo Video
+
+https://drive.google.com/file/d/13hBh2S-O-cUNVeGBivHoJsNpwLkRxsbY/view?usp=sharing
+
+## Demo Commands
+
+This repo uses [`uv`](https://docs.astral.sh/uv/) to manage the environment. After cloning the repo, run the following to get set up.
+
+```bash
+uv sync
+```
+
+Now you can run the demo with 3 processes:
+
+**Terminal 1 & 2:**
+
+```bash
+source .venv/bin/activate
+python distributed_test.py worker
+```
+
+**Terminal 3:**
+
+```bash
+source .venv/bin/activate
+python distributed_test.py all 0
+```
+
 # Gold-medalist Performance in Solving Olympiad Geometry with AlphaGeometry2
 
 We present AlphaGeometry2, a significantly improved version of AlphaGeometry

@@ -36,6 +36,14 @@ class ElimVar:
   def __str__(self):
     return self.name
 
+  def __eq__(self, other) -> bool:
+    if type(self) is not type(other):
+      return False
+    return self.name == other.name
+
+  def __hash__(self) -> int:
+    return hash((type(self).__name__, self.name))
+
 
 class ElimLHS(ElimVar):
   pass

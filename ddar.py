@@ -94,7 +94,8 @@ class DDAR:
 
       num_line = NumLine.through(a.value, b.value)
       num_direction = num_line.direction()
-      direction = self.elim_angle.new_var(num_direction, f'd({a} {b})')
+      dir_name = f'd({a} {b})' if a.name <= b.name else f'd({b} {a})'
+      direction = self.elim_angle.new_var(num_direction, dir_name)
       line = FormalLine(
           points=[a, b],
           main_pair=(a, b),
