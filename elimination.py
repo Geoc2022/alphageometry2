@@ -101,7 +101,7 @@ class LinComb:
       x = str(x)
       if c == 1:
         parts.append(x)
-      elif c == 1:
+      elif c == -1:
         parts.append(f"-{x}")
       elif c.denominator == 1:
         parts.append(f"{c.numerator}*{x}")
