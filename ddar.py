@@ -75,6 +75,8 @@ class DDAR:
 
     self.elim_dist_mul = el.ElimDistMul()
     self.elim_dist_add = el.ElimDistAdd()
+    self.order_dist_mul = el.OrderDB(self.elim_dist_mul.simplify, "dist_mul")
+    self.order_dist_add = el.OrderDB(self.elim_dist_add.simplify, "dist_add")
     self.elim_angle = el.ElimAngle()
 
     self.point_subst = {x: x for x in points}
@@ -140,6 +142,14 @@ class DDAR:
       self.elim_dist_mul.force_one(self.pred_to_dist_mul(pred))
     elif pred.name == 'distseq':
       self.elim_dist_add.force_zero(self.pred_to_dist_add(pred))
+    elif pred.name in ('distrle', 'rle'):
+      self.order_dist_mul.force_ge(self.pred_to_dist_mul(pred).scale(-1))
+    elif pred.name in ('distrlt', 'rlt'):
+      self.order_dist_mul.force_gt(self.pred_to_dist_mul(pred).scale(-1))
+    elif pred.name in ('distsle', 'ledist', 'gedist'):
+      self.order_dist_add.force_ge(self.pred_to_dist_add(pred).scale(-1))
+    elif pred.name in ('distslt', 'ltdist', 'gtdist'):
+      self.order_dist_add.force_gt(self.pred_to_dist_add(pred).scale(-1))
     elif pred.name == 'cyclic':
       self.force_concyclic(pred.points, ())
     elif pred.name == 'cyclic_with_centers':
@@ -241,18 +251,40 @@ class DDAR:
       rat1 = self.get_dist_ratio(a, b, c, d)
       rat2 = self.get_dist_ratio(e, f, g, h)
       return rat1 / rat2
+    elif pred.name == 'distrlt' or pred.name == 'distrle':
+      assert len(pred.points) == 2 * len(pred.constants)
+      comb = el.LinComb.zero()
+      for i, coef in enumerate(pred.constants):
+        a, b = pred.points[2 * i : 2 * (i + 1)]
+        comb.iadd_mul(self.pair_to_dist_mul[a, b].comb, coef)
+      return el.DistMul(comb)
+    elif pred.name == 'rlt' or pred.name == 'rle':
+      a, b, c, d = pred.points
+      [const] = pred.constants
+      d1 = self.get_dist_mul(a, b)
+      d2 = self.get_dist_mul(c, d)
+      return d1 / d2 / Fraction(const)
     else:
       raise ValueError('Not a ratio predicate:', pred.name)
 
   def pred_to_dist_add(self, pred):
-    if pred.name == 'distseq':
+    if pred.name == 'distseq' or pred.name == 'distslt' or pred.name == 'distsle':
       assert len(pred.points) == 2 * len(pred.constants)
-      _ = pred.constants[:-1]
       comb = el.LinComb.zero()
       for i, coef in enumerate(pred.constants):
         a, b = pred.points[2 * i : 2 * (i + 1)]
         comb.iadd_mul(self.pair_to_dist_add[a, b].comb, coef)
       return el.DistAdd(comb)
+    elif pred.name == 'ltdist' or pred.name == 'ledist':
+      a, b, c, d = pred.points
+      d1 = self.get_dist_add(a, b)
+      d2 = self.get_dist_add(c, d)
+      return d1 - d2
+    elif pred.name == 'gtdist' or pred.name == 'gedist':
+      a, b, c, d = pred.points
+      d1 = self.get_dist_add(a, b)
+      d2 = self.get_dist_add(c, d)
+      return d2 - d1
     else:
       raise ValueError('Not a sum predicate:', pred.name)
 
@@ -276,6 +308,14 @@ class DDAR:
       res = self.pred_to_dist_add(pred)
       res = self.elim_dist_add.simplify(res)
       return res.is_zero()
+    elif pred.name in ('distrle', 'rle'):
+      return self.order_dist_mul.check_ge(self.pred_to_dist_mul(pred).scale(-1))
+    elif pred.name in ('distrlt', 'rlt'):
+      return self.order_dist_mul.check_gt(self.pred_to_dist_mul(pred).scale(-1))
+    elif pred.name == 'distsle' or pred.name == 'ledist' or pred.name == 'gedist':
+      return self.order_dist_add.check_ge(self.pred_to_dist_add(pred).scale(-1))
+    elif pred.name == 'distslt' or pred.name == 'ltdist' or pred.name == 'gtdist':
+      return self.order_dist_add.check_gt(self.pred_to_dist_add(pred).scale(-1))
     elif pred.name == 'cyclic':
       return self.check_concyclic(pred.points)
     elif pred.name == 'cyclic_with_centers':
@@ -331,6 +371,13 @@ class DDAR:
       if verbose:
         print('  Circles...                 ', end='')
       changed_last = self.search_circles()
+      changed = changed or changed_last
+      if verbose:
+        print(['----', 'Updated'][changed_last])
+
+      if verbose:
+        print('  Triangle inequalities...    ', end='')
+      changed_last = self.search_triangle_inequality()
       changed = changed or changed_last
       if verbose:
         print(['----', 'Updated'][changed_last])
@@ -520,6 +567,35 @@ class DDAR:
                   ),
               )
           )
+
+    return changed
+
+  def search_triangle_inequality(self):
+    """Add triangle inequalities."""
+    changed = False
+    pts = self.points
+
+    for a, b, c in itertools.combinations(pts, 3):
+      if self.num_identical(a, b) or self.num_identical(b, c) or self.num_identical(a, c):
+        continue
+
+      dab = self.get_dist_add(a, b)
+      dac = self.get_dist_add(a, c)
+      dbc = self.get_dist_add(b, c)
+
+      # non-strict always
+      changed = self.order_dist_add.force_le_zero(dab - dac - dbc) or changed
+      changed = self.order_dist_add.force_le_zero(dac - dab - dbc) or changed
+      changed = self.order_dist_add.force_le_zero(dbc - dab - dac) or changed
+
+      # strict form if non-collinear
+      if abs(ng.orientation(a.value, b.value, c.value)) == 1:
+        if (dab.value - dac.value - dbc.value) < -ng.ATOM:
+          changed = self.order_dist_add.force_lt_zero(dab - dac - dbc) or changed
+        if (dac.value - dab.value - dbc.value) < -ng.ATOM:
+          changed = self.order_dist_add.force_lt_zero(dac - dab - dbc) or changed
+        if (dbc.value - dab.value - dac.value) < -ng.ATOM:
+          changed = self.order_dist_add.force_lt_zero(dbc - dab - dac) or changed
 
     return changed
 
@@ -1034,6 +1110,8 @@ class DDAR:
   #######  low-level functions
 
   def update_cache(self):
+    self.order_dist_mul.simplify_all()
+    self.order_dist_add.simplify_all()
     for a, b in itertools.combinations(self.points, 2):
       if self.num_identical(a, b):
         continue

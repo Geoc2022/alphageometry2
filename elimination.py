@@ -283,17 +283,32 @@ class DistMul:
   def is_one(self) -> bool:
     return not self.comb.d
 
+  def is_zero(self) -> bool:
+    return not self.comb.d
+
   # arithmetics
+
+  def scale(self, coef: fractions.Fraction | int) -> DistMul:
+    return DistMul(self.comb * coef)
+
+  def __add__(self, other: DistMul) -> DistMul:
+    return DistMul(self.comb + other.comb)
+
+  def __sub__(self, other: DistMul) -> DistMul:
+    return DistMul(self.comb - other.comb)
+
+  def __neg__(self) -> DistMul:
+    return DistMul(self.comb * (-1))
 
   def __mul__(self, other: fractions.Fraction | int | DistMul) -> DistMul:
     if isinstance(other, (int, fractions.Fraction)):
       other = DistMul.frac_value(other)
-    return DistMul(self.comb + other.comb)
+    return self + other
 
   def __truediv__(self, other: fractions.Fraction | int | DistMul) -> DistMul:
     if isinstance(other, (int, fractions.Fraction)):
       other = DistMul.frac_value(other)
-    return DistMul(self.comb - other.comb)
+    return self - other
 
   # value
 
@@ -357,17 +372,20 @@ class DistAdd:
 
   def normalize(self) -> tuple[DistAdd, fractions.Fraction | int]:
     c = min(abs(c) for x, c in self.comb.d.items() if isinstance(x, ElimLHS))
-    return self / c, c
+    return self.scale(fractions.Fraction(1) / c), c
 
   def is_zero(self) -> bool:
     return not self.comb.d
 
   # arithmetics
+  def scale(self, coef: fractions.Fraction | int) -> DistAdd:
+    return DistAdd(self.comb * coef)
+
   def __mul__(self, other: fractions.Fraction | int) -> DistAdd:
-    return DistAdd(self.comb * other)
+    return self.scale(other)
 
   def __truediv__(self, other: fractions.Fraction | int) -> DistAdd:
-    return DistAdd(self.comb * (fractions.Fraction(1) / other))
+    return self.scale(fractions.Fraction(1) / other)
 
   def __add__(self, other: DistAdd) -> DistAdd:
     return DistAdd(self.comb + other.comb)
@@ -520,3 +538,195 @@ class ElimAngle:
 
   def was_encountered(self, angle):
     return self.core.was_encountered(angle.comb)
+
+
+class OrderDB:
+  """Engine for ordered equations."""
+
+  def __init__(self, simplify_func, domain_name):
+    self.simplify_func = simplify_func
+    self.domain_name = domain_name
+    self.best_ge = {}
+    self.best_gt = {}
+    self.key_to_expr_n = {}
+
+  def _get_n_coef(self, expr):
+    expr = self.simplify_func(expr)
+    if isinstance(expr, DistMul):
+      return expr.normalize()
+    else:
+      expr = self._canonicalize(expr)
+      return expr, fractions.Fraction(1)
+
+  def _get_key(self, expr_n):
+    return frozenset(expr_n.comb.d.items())
+
+  def _canonicalize(self, expr):
+    if expr.is_zero():
+      return expr
+    keys = sorted(expr.comb.d.keys(), key=lambda x: str(x))
+    pivot = keys[0]
+    coef = expr.comb.d[pivot]
+    expr = expr.scale(fractions.Fraction(1) / abs(coef))
+    return expr
+
+  @property
+  def known_ge(self):
+    return set(self.key_to_expr_n[k] * c for k, c in self.best_ge.items())
+
+  @property
+  def known_gt(self):
+    return set(self.key_to_expr_n[k] * c for k, c in self.best_gt.items())
+
+  def force_ge(self, expr):
+    """Adds expr >= 0."""
+    if expr.value < -ng.ATOM:
+      raise ValueError(f"Forcing {self.domain_name} {expr} >= 0 but value is {expr.value}")
+    expr_n, coef = self._get_n_coef(expr)
+    if expr_n.is_zero():
+      return False
+
+    key = self._get_key(expr_n)
+    self.key_to_expr_n[key] = expr_n
+
+    if key in self.best_gt and self.best_gt[key] <= coef + ng.ATOM:
+      return False
+    if key in self.best_ge and self.best_ge[key] <= coef + ng.ATOM:
+      return False
+
+    self.best_ge[key] = coef
+    self._closure(expr_n * coef, False)
+    return True
+
+  def force_gt(self, expr):
+    """Adds expr > 0."""
+    if expr.value < ng.ATOM:
+      raise ValueError(f"Forcing {self.domain_name} {expr} > 0 but value is {expr.value}")
+    expr_n, coef = self._get_n_coef(expr)
+    if expr_n.is_zero():
+      raise ValueError(f"Forcing {self.domain_name} {expr} > 0 but it is zero")
+
+    key = self._get_key(expr_n)
+    self.key_to_expr_n[key] = expr_n
+
+    if key in self.best_gt and self.best_gt[key] <= coef + ng.ATOM:
+      return False
+
+    self.best_gt[key] = coef
+    if key in self.best_ge and self.best_ge[key] >= coef - ng.ATOM:
+      del self.best_ge[key]
+
+    self._closure(expr_n * coef, True)
+    return True
+
+  def force_ge_zero(self, expr):
+    return self.force_ge(expr)
+
+  def force_gt_zero(self, expr):
+    return self.force_gt(expr)
+
+  def force_le_zero(self, expr):
+    return self.force_ge(expr.scale(-1))
+
+  def force_lt_zero(self, expr):
+    return self.force_gt(expr.scale(-1))
+
+  def check_ge_zero(self, expr):
+    return self.check_ge(expr)
+
+  def check_gt_zero(self, expr):
+    return self.check_gt(expr)
+
+  def check_le_zero(self, expr):
+    return self.check_ge(expr.scale(-1))
+
+  def check_lt_zero(self, expr):
+    return self.check_gt(expr.scale(-1))
+
+  def _closure(self, new_expr, is_strict):
+    """Simple transitive closure."""
+    num_vars_new = sum(1 for v in new_expr.comb.d.keys() if isinstance(v, ElimLHS))
+    if num_vars_new > 2: return
+
+    to_check = collections.deque([(new_expr, is_strict)])
+    while to_check:
+      e1, k1 = to_check.popleft()
+      num_vars1 = sum(1 for v in e1.comb.d.keys() if isinstance(v, ElimLHS))
+      if num_vars1 > 2: continue
+
+      all_known = []
+      for k, c in self.best_ge.items():
+        e = self.key_to_expr_n[k]
+        num_vars = sum(1 for v in e.comb.d.keys() if isinstance(v, ElimLHS))
+        if num_vars <= 2: all_known.append((e * c, False))
+      for k, c in self.best_gt.items():
+        e = self.key_to_expr_n[k]
+        num_vars = sum(1 for v in e.comb.d.keys() if isinstance(v, ElimLHS))
+        if num_vars <= 2: all_known.append((e * c, True))
+
+      for e2, k2 in all_known:
+        if self._get_key(e1) == self._get_key(e2):
+          continue
+
+        common_vars = [v for v in set(e1.comb.d.keys()) & set(e2.comb.d.keys()) if isinstance(v, ElimLHS)]
+        if not any(e1.comb.d[v] * e2.comb.d[v] < 0 for v in common_vars):
+          continue
+
+        e_sum = e1 + e2
+        if e_sum.is_zero(): continue
+        num_vars_sum = sum(1 for v in e_sum.comb.d.keys() if isinstance(v, ElimLHS))
+        if num_vars_sum > 2:
+          continue
+
+        new_kind = k1 or k2
+        expr_n, coef = self._get_n_coef(e_sum)
+        key = self._get_key(expr_n)
+        self.key_to_expr_n[key] = expr_n
+
+        if new_kind == True:
+          if key not in self.best_gt or self.best_gt[key] > coef + ng.ATOM:
+            self.best_gt[key] = coef
+            if key in self.best_ge and self.best_ge[key] >= coef - ng.ATOM:
+              del self.best_ge[key]
+            to_check.append((expr_n * coef, True))
+        else:
+          if key not in self.best_gt and (key not in self.best_ge or self.best_ge[key] > coef + ng.ATOM):
+            self.best_ge[key] = coef
+            to_check.append((expr_n * coef, False))
+
+  def check_ge(self, expr):
+    expr_n, coef = self._get_n_coef(expr)
+    if expr_n.is_zero():
+      return True
+    key = self._get_key(expr_n)
+    if key in self.best_gt and self.best_gt[key] <= coef + ng.ATOM:
+      return True
+    if key in self.best_ge and self.best_ge[key] <= coef + ng.ATOM:
+      return True
+    return False
+
+  def check_gt(self, expr):
+    expr_n, coef = self._get_n_coef(expr)
+    if expr_n.is_zero():
+      return False
+    key = self._get_key(expr_n)
+    if key in self.best_gt and self.best_gt[key] <= coef + ng.ATOM:
+      return True
+    return False
+
+  def simplify_all(self):
+    old_ge = [(self.key_to_expr_n[k], c) for k, c in self.best_ge.items()]
+    old_gt = [(self.key_to_expr_n[k], c) for k, c in self.best_gt.items()]
+    self.best_ge = {}
+    self.best_gt = {}
+    for expr_n, coef in old_ge:
+      self.force_ge(expr_n * coef)
+    for expr_n, coef in old_gt:
+      self.force_gt(expr_n * coef)
+
+  def clone(self, simplify_func):
+    res = OrderDB(simplify_func, self.domain_name)
+    res.best_ge = dict(self.best_ge)
+    res.best_gt = dict(self.best_gt)
+    res.key_to_expr_n = dict(self.key_to_expr_n)
+    return res
