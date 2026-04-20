@@ -155,19 +155,116 @@ def test_triangle_inequality_weaker2():
   assert d.check_pred(p.goal)
 
 
+def test_multistep_chain_le_1d():
+  # a<=b+c, b<=e, c<=f, e+f<=d  ==> a<=d
+  s = (
+      "o@0_0 = ; "
+      "a@10_0 = ; b@4_0 = ; c@6_0 = ; e@5_0 = ; f@7_0 = ; d@12_0 = "
+      "coll o a b, coll o a c, coll o a e, coll o a f, coll o a d, "
+      "distsle o a o b o c 1 -1 -1, "
+      "ledist o b o e, "
+      "ledist o c o f, "
+      "distsle o e o f o d 1 1 -1 "
+      "? ledist o a o d"
+  )
+  ddb, p = solve(s)
+  assert ddb.check_pred(p.goal)
+
+
+def test_multistep_chain_lt_then_le():
+  # a < b+c, b<=e, c<=f, e+f<d  ==> a<d
+  s = (
+      "o@0_0 = ; "
+      "a@10_0 = ; b@4_0 = ; c@7_0 = ; e@5_0 = ; f@8_0 = ; d@14_0 = "
+      "coll o a b, coll o a c, coll o a e, coll o a f, coll o a d, "
+      "distslt o a o b o c 1 -1 -1, "
+      "ledist o b o e, "
+      "ledist o c o f, "
+      "distslt o e o f o d 1 1 -1 "
+      "? ltdist o a o d"
+  )
+  ddb, p = solve(s)
+  assert ddb.check_pred(p.goal)
+
+
+def test_multistep_chain_le_then_lt():
+  # a<=b+c, b<e, c<=f, e+f<=d  ==> a<d
+  s = (
+      "o@0_0 = ; "
+      "a@10_0 = ; b@4_0 = ; c@6_0 = ; e@5_0 = ; f@7_0 = ; d@13_0 = "
+      "coll o a b, coll o a c, coll o a e, coll o a f, coll o a d, "
+      "distsle o a o b o c 1 -1 -1, "
+      "ltdist o b o e, "
+      "ledist o c o f, "
+      "distsle o e o f o d 1 1 -1 "
+      "? ltdist o a o d"
+  )
+  ddb, p = solve(s)
+  assert ddb.check_pred(p.goal)
+
+
+def test_multistep_chain_all_strict():
+  # a<b+c, b<e, c<f, e+f<d  ==> a<d
+  s = (
+      "o@0_0 = ; "
+      "a@9_0 = ; b@4_0 = ; c@6_0 = ; e@5_0 = ; f@7_0 = ; d@13_0 = "
+      "coll o a b, coll o a c, coll o a e, coll o a f, coll o a d, "
+      "distslt o a o b o c 1 -1 -1, "
+      "ltdist o b o e, "
+      "ltdist o c o f, "
+      "distslt o e o f o d 1 1 -1 "
+      "? ltdist o a o d"
+  )
+  ddb, p = solve(s)
+  assert ddb.check_pred(p.goal)
+
+
+def test_multistep_chain_with_cong_substitution():
+  s = (
+      "o@0_0 = ; "
+      "a@10_0 = ; b@4_0 = ; c@6_0 = ; "
+      "e1@5_0 = ; f1@7_0 = ; e@-5_0 = ; f@-7_0 = ; d@12_0 = "
+      "coll o a b, coll o a c, coll o a e1, coll o a f1, coll o a d, "
+      "distsle o a o b o c 1 -1 -1, "
+      "ledist o b o e1, "
+      "ledist o c o f1, "
+      "cong o e1 o e, "
+      "cong o f1 o f, "
+      "distsle o e o f o d 1 1 -1 "
+      "? ledist o a o d"
+  )
+  ddb, p = solve(s)
+  assert ddb.check_pred(p.goal)
+
+
 def main():
   test_ltdist_basic()
   test_ledist_basic()
   test_ltdist_via_eq_subst()
+
   test_distslt_linear_combo()
   test_distsle_linear_combo()
+
   test_ratio_rlt()
   test_ratio_chain_with_cong()
   test_strict_implies_nonstrict()
   test_ratio_rlt_const()
   test_ratio_rlt_const_false()
+
   test_transitivity_lt()
   test_transitivity_le()
+
+  test_triangle_inequality()
+  test_triangle_inequality_strict()
+  test_triangle_inequality_with_cong()
+  test_triangle_inequality_weaker()
+  test_triangle_inequality_weaker2()
+
+  test_multistep_chain_le_1d()
+  test_multistep_chain_lt_then_le()
+  test_multistep_chain_le_then_lt()
+  test_multistep_chain_all_strict()
+  test_multistep_chain_with_cong_substitution()
 
   print("All passed!")
 

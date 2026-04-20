@@ -539,6 +539,8 @@ class ElimAngle:
   def was_encountered(self, angle):
     return self.core.was_encountered(angle.comb)
 
+ORDER_CLOSURE_MAX_VARS = 2
+ORDER_CLOSURE_BUDGET = 10_000
 
 class OrderDB:
   """Engine for ordered equations."""
@@ -549,6 +551,8 @@ class OrderDB:
     self.best_ge = {}
     self.best_gt = {}
     self.key_to_expr_n = {}
+    self.key_to_num_vars = {}
+    self.key_to_elim_vars = {}
 
   def _get_n_coef(self, expr):
     expr = self.simplify_func(expr)
@@ -578,46 +582,69 @@ class OrderDB:
   def known_gt(self):
     return set(self.key_to_expr_n[k] * c for k, c in self.best_gt.items())
 
-  def force_ge(self, expr):
-    """Adds expr >= 0."""
+  def _register_expr_meta(self, key, expr_n):
+    self.key_to_expr_n[key] = expr_n
+    if key not in self.key_to_num_vars:
+      elim_vars = [v for v in expr_n.comb.d.keys() if isinstance(v, ElimLHS)]
+      self.key_to_elim_vars[key] = set(elim_vars)
+      self.key_to_num_vars[key] = len(elim_vars)
+
+  def _force_ge_no_closure(self, expr):
+    """Adds expr >= 0 without closure."""
     if expr.value < -ng.ATOM:
-      raise ValueError(f"Forcing {self.domain_name} {expr} >= 0 but value is {expr.value}")
+      raise ValueError(
+          f"Forcing {self.domain_name} {expr} >= 0 but value is {expr.value}"
+      )
     expr_n, coef = self._get_n_coef(expr)
     if expr_n.is_zero():
-      return False
+      return False, None, None
 
     key = self._get_key(expr_n)
-    self.key_to_expr_n[key] = expr_n
+    self._register_expr_meta(key, expr_n)
 
     if key in self.best_gt and self.best_gt[key] <= coef + ng.ATOM:
-      return False
+      return False, expr_n, coef
     if key in self.best_ge and self.best_ge[key] <= coef + ng.ATOM:
-      return False
+      return False, expr_n, coef
 
     self.best_ge[key] = coef
-    self._closure(expr_n * coef, False)
-    return True
+    return True, expr_n, coef
 
-  def force_gt(self, expr):
-    """Adds expr > 0."""
+  def force_ge(self, expr):
+    """Adds expr >= 0."""
+    added, expr_n, coef = self._force_ge_no_closure(expr)
+    if added:
+      self._closure(expr_n * coef, False)
+    return added
+
+  def _force_gt_no_closure(self, expr):
+    """Adds expr > 0 without closure."""
     if expr.value < ng.ATOM:
-      raise ValueError(f"Forcing {self.domain_name} {expr} > 0 but value is {expr.value}")
+      raise ValueError(
+          f"Forcing {self.domain_name} {expr} > 0 but value is {expr.value}"
+      )
     expr_n, coef = self._get_n_coef(expr)
     if expr_n.is_zero():
       raise ValueError(f"Forcing {self.domain_name} {expr} > 0 but it is zero")
 
     key = self._get_key(expr_n)
-    self.key_to_expr_n[key] = expr_n
+    self._register_expr_meta(key, expr_n)
 
     if key in self.best_gt and self.best_gt[key] <= coef + ng.ATOM:
-      return False
+      return False, expr_n, coef
 
     self.best_gt[key] = coef
     if key in self.best_ge and self.best_ge[key] >= coef - ng.ATOM:
       del self.best_ge[key]
 
-    self._closure(expr_n * coef, True)
-    return True
+    return True, expr_n, coef
+
+  def force_gt(self, expr):
+    """Adds expr > 0."""
+    added, expr_n, coef = self._force_gt_no_closure(expr)
+    if added:
+      self._closure(expr_n * coef, True)
+    return added
 
   def force_ge_zero(self, expr):
     return self.force_ge(expr)
@@ -644,55 +671,204 @@ class OrderDB:
     return self.check_gt(expr.scale(-1))
 
   def _closure(self, new_expr, is_strict):
-    """Simple transitive closure."""
-    num_vars_new = sum(1 for v in new_expr.comb.d.keys() if isinstance(v, ElimLHS))
-    if num_vars_new > 2: return
+    """Cheap transitive closure."""
+    expr_n_new, coef_new = self._get_n_coef(new_expr)
+    key_new = self._get_key(expr_n_new)
+    self._register_expr_meta(key_new, expr_n_new)
 
-    to_check = collections.deque([(new_expr, is_strict)])
+    if self.key_to_num_vars.get(key_new, 999) > ORDER_CLOSURE_MAX_VARS:
+      return
+
+    to_check = collections.deque([(expr_n_new * coef_new, is_strict, key_new)])
+    steps = 0
     while to_check:
-      e1, k1 = to_check.popleft()
-      num_vars1 = sum(1 for v in e1.comb.d.keys() if isinstance(v, ElimLHS))
-      if num_vars1 > 2: continue
+      e1, k1, key1 = to_check.popleft()
+      steps += 1
+      if steps > ORDER_CLOSURE_BUDGET:
+        break
+
+      num_vars1 = self.key_to_num_vars.get(key1, 999)
+      if num_vars1 > ORDER_CLOSURE_MAX_VARS:
+        continue
+
+      elim_vars1 = self.key_to_elim_vars.get(key1, set())
+      e1_d = e1.comb.d
 
       all_known = []
-      for k, c in self.best_ge.items():
-        e = self.key_to_expr_n[k]
-        num_vars = sum(1 for v in e.comb.d.keys() if isinstance(v, ElimLHS))
-        if num_vars <= 2: all_known.append((e * c, False))
-      for k, c in self.best_gt.items():
-        e = self.key_to_expr_n[k]
-        num_vars = sum(1 for v in e.comb.d.keys() if isinstance(v, ElimLHS))
-        if num_vars <= 2: all_known.append((e * c, True))
+      for key2, coef2 in self.best_ge.items():
+        if key1 == key2:
+          continue
+        if self.key_to_num_vars.get(key2, 999) <= ORDER_CLOSURE_MAX_VARS:
+          all_known.append((key2, coef2, False))
+      for key2, coef2 in self.best_gt.items():
+        if key1 == key2:
+          continue
+        if self.key_to_num_vars.get(key2, 999) <= ORDER_CLOSURE_MAX_VARS:
+          all_known.append((key2, coef2, True))
 
-      for e2, k2 in all_known:
-        if self._get_key(e1) == self._get_key(e2):
+      for key2, coef2, k2 in all_known:
+        elim_vars2 = self.key_to_elim_vars.get(key2, set())
+        common_vars = elim_vars1 & elim_vars2
+        if not common_vars:
           continue
 
-        common_vars = [v for v in set(e1.comb.d.keys()) & set(e2.comb.d.keys()) if isinstance(v, ElimLHS)]
-        if not any(e1.comb.d[v] * e2.comb.d[v] < 0 for v in common_vars):
+        e2_n = self.key_to_expr_n[key2]
+        e2_d = e2_n.comb.d
+        if not any(e1_d[v] * e2_d[v] < 0 for v in common_vars):
           continue
 
+        e2 = e2_n * coef2
         e_sum = e1 + e2
-        if e_sum.is_zero(): continue
-        num_vars_sum = sum(1 for v in e_sum.comb.d.keys() if isinstance(v, ElimLHS))
-        if num_vars_sum > 2:
+        if e_sum.is_zero():
+          continue
+
+        num_vars_sum = sum(
+            1 for v in e_sum.comb.d.keys() if isinstance(v, ElimLHS)
+        )
+        if num_vars_sum > ORDER_CLOSURE_MAX_VARS:
           continue
 
         new_kind = k1 or k2
         expr_n, coef = self._get_n_coef(e_sum)
         key = self._get_key(expr_n)
-        self.key_to_expr_n[key] = expr_n
+        self._register_expr_meta(key, expr_n)
 
-        if new_kind == True:
+        if new_kind:
           if key not in self.best_gt or self.best_gt[key] > coef + ng.ATOM:
             self.best_gt[key] = coef
             if key in self.best_ge and self.best_ge[key] >= coef - ng.ATOM:
               del self.best_ge[key]
-            to_check.append((expr_n * coef, True))
+            to_check.append((expr_n * coef, True, key))
         else:
-          if key not in self.best_gt and (key not in self.best_ge or self.best_ge[key] > coef + ng.ATOM):
+          if key not in self.best_gt and (
+              key not in self.best_ge or self.best_ge[key] > coef + ng.ATOM
+          ):
             self.best_ge[key] = coef
-            to_check.append((expr_n * coef, False))
+            to_check.append((expr_n * coef, False, key))
+
+  def _iter_constraints(self):
+    for k, c in self.best_ge.items():
+      yield self.key_to_expr_n[k] * c, False
+    for k, c in self.best_gt.items():
+      yield self.key_to_expr_n[k] * c, True
+
+  def _lhs_vars_in_expr(self, expr):
+    return [v for v in expr.comb.d.keys() if isinstance(v, ElimLHS)]
+
+  def _coef(self, expr, var):
+    return expr.comb.d.get(var, fractions.Fraction(0))
+
+  def _normalize_for_pivot(self, expr, var):
+    c = self._coef(expr, var)
+    if c == 0:
+      return expr
+    return expr.scale(fractions.Fraction(1) / abs(c))
+
+  def _insert_constraint_local(self, ge_map, gt_map, key_to_expr, expr, is_strict):
+    expr_n, coef = self._get_n_coef(expr)
+    if expr_n.is_zero():
+      return False
+
+    key = self._get_key(expr_n)
+    key_to_expr[key] = expr_n
+
+    if is_strict:
+      old = gt_map.get(key)
+      if old is not None and old <= coef + ng.ATOM:
+        return False
+      gt_map[key] = coef
+      if key in ge_map and ge_map[key] >= coef - ng.ATOM:
+        del ge_map[key]
+      return True
+    else:
+      if key in gt_map:
+        return False
+      old = ge_map.get(key)
+      if old is not None and old <= coef + ng.ATOM:
+        return False
+      ge_map[key] = coef
+      return True
+
+  def _gge_proves(self, target_expr, target_is_strict):
+    """Check if target is provable using Generalized Gaussian Elimination."""
+    ge_map = dict(self.best_ge)
+    gt_map = dict(self.best_gt)
+    key_to_expr = dict(self.key_to_expr_n)
+
+    neg_goal = target_expr.scale(-1)
+    self._insert_constraint_local(
+        ge_map, gt_map, key_to_expr, neg_goal, (not target_is_strict)
+    )
+
+    constraints = []
+    for k, c in ge_map.items():
+      constraints.append((key_to_expr[k] * c, False))
+    for k, c in gt_map.items():
+      constraints.append((key_to_expr[k] * c, True))
+
+    vars_all = set()
+    for e, _ in constraints:
+      vars_all.update(self._lhs_vars_in_expr(e))
+    vars_all = list(vars_all)
+
+    budget = ORDER_CLOSURE_BUDGET
+
+    for var in vars_all:
+      if budget <= 0:
+        break
+
+      T_P, T_N, T_Z = [], [], []
+      for e, s in constraints:
+        c = self._coef(e, var)
+        if c > 0:
+          T_P.append((self._normalize_for_pivot(e, var), s))
+        elif c < 0:
+          T_N.append((self._normalize_for_pivot(e, var), s))
+        else:
+          T_Z.append((e, s))
+
+      if not T_P or not T_N:
+        constraints = T_Z
+        continue
+
+      T_P.sort(key=lambda t: len(t[0].comb.d))
+      T_N.sort(key=lambda t: len(t[0].comb.d))
+
+      new_constraints = list(T_Z)
+
+      for e_pos, s_pos in T_P:
+        for e_neg, s_neg in T_N:
+          budget -= 1
+          if budget <= 0:
+            break
+          e_new = e_pos + e_neg
+          if var in e_new.comb.d and e_new.comb.d[var] == 0:
+            del e_new.comb.d[var]
+
+          if e_new.is_zero():
+            if s_pos or s_neg:
+              return True
+            continue
+
+          new_constraints.append((e_new, s_pos or s_neg))
+        if budget <= 0:
+          break
+
+      constraints = new_constraints
+
+    for e, is_strict in constraints:
+      has_lhs = any(isinstance(v, ElimLHS) for v in e.comb.d.keys())
+      if has_lhs:
+        continue
+      val = e.value
+      if is_strict:
+        if val <= ng.ATOM:
+          return True
+      else:
+        if val < -ng.ATOM:
+          return True
+
+    return False
 
   def check_ge(self, expr):
     expr_n, coef = self._get_n_coef(expr)
@@ -703,7 +879,7 @@ class OrderDB:
       return True
     if key in self.best_ge and self.best_ge[key] <= coef + ng.ATOM:
       return True
-    return False
+    return self._gge_proves(expr_n * coef, target_is_strict=False)
 
   def check_gt(self, expr):
     expr_n, coef = self._get_n_coef(expr)
@@ -712,21 +888,28 @@ class OrderDB:
     key = self._get_key(expr_n)
     if key in self.best_gt and self.best_gt[key] <= coef + ng.ATOM:
       return True
-    return False
+    return self._gge_proves(expr_n * coef, target_is_strict=True)
 
   def simplify_all(self):
     old_ge = [(self.key_to_expr_n[k], c) for k, c in self.best_ge.items()]
     old_gt = [(self.key_to_expr_n[k], c) for k, c in self.best_gt.items()]
+
     self.best_ge = {}
     self.best_gt = {}
+    self.key_to_expr_n = {}
+    self.key_to_num_vars = {}
+    self.key_to_elim_vars = {}
+
     for expr_n, coef in old_ge:
-      self.force_ge(expr_n * coef)
+      self._force_ge_no_closure(expr_n * coef)
     for expr_n, coef in old_gt:
-      self.force_gt(expr_n * coef)
+      self._force_gt_no_closure(expr_n * coef)
 
   def clone(self, simplify_func):
     res = OrderDB(simplify_func, self.domain_name)
     res.best_ge = dict(self.best_ge)
     res.best_gt = dict(self.best_gt)
     res.key_to_expr_n = dict(self.key_to_expr_n)
+    res.key_to_num_vars = dict(self.key_to_num_vars)
+    res.key_to_elim_vars = {k: set(v) for k, v in self.key_to_elim_vars.items()}
     return res
