@@ -20,6 +20,7 @@ import fractions
 import itertools
 
 import elimination as el
+import elimination_poly as ep
 import numericals as ng
 from parse import AGPoint
 
@@ -77,6 +78,10 @@ class DDAR:
     self.elim_dist_add = el.ElimDistAdd()
     self.elim_angle = el.ElimAngle()
 
+    self.poly_env = ep.PolyEnv()
+    self.elim_poly = ep.ElimPoly(self.poly_env)
+    self.pair_to_poly_idx = dict()
+
     self.point_subst = {x: x for x in points}
     self.pair_to_line = dict()
 
@@ -117,6 +122,12 @@ class DDAR:
       self.pair_to_dist_add[a, b] = dist_add
       self.pair_to_dist_add[b, a] = dist_add
 
+      pa, pb = sorted((a.name, b.name))
+      vname = f"L_{pa}_{pb}"
+      vidx = self.poly_env.new_var(vname)
+      self.pair_to_poly_idx[a, b] = vidx
+      self.pair_to_poly_idx[b, a] = vidx
+
     self.known_similar = set()
     self.triple_to_circle = (
         dict()
@@ -138,6 +149,16 @@ class DDAR:
       self.elim_angle.force_zero(self.pred_to_angle(pred))
     elif pred.name in ('distmeq', 'cong', 'eqratio', 'rconst'):
       self.elim_dist_mul.force_one(self.pred_to_dist_mul(pred))
+      if pred.name == 'cong':
+        a, b, c, d = pred.points
+        poly = self.get_len_poly(a, b) - self.get_len_poly(c, d)
+        self.elim_poly.force_zero(poly)
+      elif pred.name == 'eqratio':
+        a, b, c, d, e, f, g, h = pred.points
+        r1 = self.get_len_poly(a, b) * self.get_len_poly(g, h)
+        r2 = self.get_len_poly(c, d) * self.get_len_poly(e, f)
+        p = r1 - r2
+        self.elim_poly.force_zero(p)
     elif pred.name == 'distseq':
       self.elim_dist_add.force_zero(self.pred_to_dist_add(pred))
     elif pred.name == 'cyclic':
@@ -352,6 +373,13 @@ class DDAR:
       if verbose:
         print('  Sync segments / arcs...    ', end='')
       changed_last = self.transfer_dist_arc_mul()
+      changed = changed or changed_last
+      if verbose:
+        print(['----', 'Updated'][changed_last])
+
+      if verbose:
+        print('  Bridge to Poly...          ', end='')
+      changed_last = self.transfer_to_poly()
       changed = changed or changed_last
       if verbose:
         print(['----', 'Updated'][changed_last])
@@ -1032,6 +1060,35 @@ class DDAR:
     return a == b
 
   #######  low-level functions
+
+  def get_len_poly(self, a, b):
+    idx = self.pair_to_poly_idx[a, b]
+    return ep.Poly.var(idx, self.poly_env.nvars)
+
+  def force_poly_zero(self, poly):
+    return self.elim_poly.force_zero(poly)
+
+  def check_poly_zero(self, poly):
+    return self.elim_poly.check_zero(poly)
+
+  def transfer_to_poly(self):
+    """Bridge known length equalities into polynomial domain."""
+    changed = False
+
+    rep = {}
+    for a, b in itertools.combinations(self.points, 2):
+      if self.num_identical(a, b):
+        continue
+      dmul = self.get_dist_mul(a, b)
+      dmul_n, _ = dmul.normalize()
+      if dmul_n in rep:
+        a0, b0 = rep[dmul_n]
+        poly = self.get_len_poly(a, b) - self.get_len_poly(a0, b0)
+        changed = self.elim_poly.force_zero(poly) or changed
+      else:
+        rep[dmul_n] = (a, b)
+
+    return changed
 
   def update_cache(self):
     for a, b in itertools.combinations(self.points, 2):
