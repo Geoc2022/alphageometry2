@@ -1,3 +1,42 @@
+# AG2 + Grobner Basis
+
+Here AlphaGeometry2 is used alongside a Gröbner basis solver to solve some problems, building on the basic Gaussian elimination solver used in the original AlphaGeometry2. Essentially this allows AR to reason on polynomial based problems instead of just linear problems. For example, this version of AlphaGeometry2 can solve problems that require the Pythagorean theorem. This also could be extended to problems that require power of the point or area of a triangle (using Heron's formula).
+
+Now the system can derive the [Parallelogram law](https://en.wikipedia.org/wiki/Parallelogram_law), which is a consequence of the Pythagorean theorem. The parallelogram law states that for any parallelogram, the sum of the squares of the lengths of the four sides is equal to the sum of the squares of the lengths of the two diagonals.
+
+![para_law](https://upload.wikimedia.org/wikipedia/commons/thumb/9/96/Parallelogram_law_squares.svg/500px-Parallelogram_law_squares.svg.png)
+
+In other words, the area of the blue squares is equal to the area of the red squares.
+
+
+Tests for this extension are at [test_poly.py](https://github.com/Geoc2022/alphageometry2/blob/grobner/test_poly.py)
+
+## Getting Started
+
+This repo uses [`uv`](https://docs.astral.sh/uv/) to manage the environment. After cloning the repo, run the following to get set up.
+
+```bash
+uv sync
+source .venv/bin/activate
+```
+
+Now you can run the test file with:
+
+```bash
+python test_poly.py
+```
+
+## References
+
+https://en.wikipedia.org/wiki/Gr%C3%B6bner_basis
+
+https://www.idealsvarietiesalgorithms.org/
+
+https://pi.math.cornell.edu/~dmehrle/notes/old/alggeo/15BuchbergersAlgorithm.pdf
+
+https://static1.squarespace.com/static/64f4f4bbed9a5e630f983d0f/t/64f55b151e67627eb1d90227/1693801238043/f4.pdf
+
+
 # Gold-medalist Performance in Solving Olympiad Geometry with AlphaGeometry2
 
 We present AlphaGeometry2, a significantly improved version of AlphaGeometry
