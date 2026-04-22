@@ -2,12 +2,12 @@ from ddar import DDAR
 from parse import AGProblem
 
 
-def solve(problem_str):
+def solve(problem_str, use_pythagorean=False):
   p = AGProblem.parse(problem_str)
   d = DDAR(p.points)
   for pred in p.preds:
     d.force_pred(pred)
-  d.deduction_closure(progress_dot=False)
+  d.deduction_closure(progress_dot=False, use_pythagorean=use_pythagorean)
   return d, p
 
 
@@ -206,6 +206,85 @@ def test_eqratio_bridge():
   assert d.check_poly_zero(poly)
 
 
+def test_pythagorean_from_perp():
+  s = "a@0_0 = ; b@3_0 = ; c@0_4 = perp a b a c ? perp a b a c"
+  d, p = solve(s, use_pythagorean=True)
+  assert d.check_pred(p.goal)
+
+  a, b, c = (_pt(p, x) for x in ("a", "b", "c"))
+  ab = d.get_len_poly(a, b)
+  ac = d.get_len_poly(a, c)
+  bc = d.get_len_poly(b, c)
+
+  poly = ab * ab + ac * ac - bc * bc
+  assert d.check_poly_zero(poly)
+
+
+def test_pythagorean_not_for_nonright():
+  s = "a@0_0 = ; b@2_0 = ; c@1_1 = ? cong a b a c"
+  d, p = solve(s, use_pythagorean=True)
+
+  a, b, c = (_pt(p, x) for x in ("a", "b", "c"))
+  ab = d.get_len_poly(a, b)
+  ac = d.get_len_poly(a, c)
+  bc = d.get_len_poly(b, c)
+
+  poly = ab * ab + ac * ac - bc * bc
+  assert not d.check_poly_zero(poly)
+
+
+def test_parallelogram_law():
+  s = (
+      "d@0_0 = ; c@2_0 = ; b@3_1 = ; a@1_1 = ; e@1_0 = ; f@3_0 = "
+      "para a b d c, para a d b c, "
+      "coll d c e, coll d c f, coll e c f, "
+      "distseq d e e c d c 1 1 -1, distseq d c c f d f 1 1 -1, "
+      "perp a e d c, perp b f d c "
+      "? para a b d c"
+  )
+  ddb, p = solve(s, use_pythagorean=True)
+  assert ddb.check_pred(p.goal)
+
+  a, b, c, d, e, f = (_pt(p, x) for x in ("a", "b", "c", "d", "e", "f"))
+
+  AB = ddb.get_len_poly(a, b)
+  EC = ddb.get_len_poly(e, c)
+
+  DE = ddb.get_len_poly(d, e)
+  CF = ddb.get_len_poly(c, f)
+  AE = ddb.get_len_poly(a, e)
+  BF = ddb.get_len_poly(b, f)
+  DF = ddb.get_len_poly(d, f)
+  DC = ddb.get_len_poly(d, c)
+
+  AC = ddb.get_len_poly(a, c)
+  BD = ddb.get_len_poly(b, d)
+
+  # DE = CF
+  assert ddb.check_poly_zero(DE - CF)
+
+  # CF = AB - EC
+  assert ddb.check_poly_zero(CF - (AB - EC))
+
+  # AE = BF
+  assert ddb.check_poly_zero(AE - BF)
+
+  # DF = DC + CF
+  assert ddb.check_poly_zero(DF - (DC + CF))
+
+  # DC + CF = 2*AB - EC
+  assert ddb.check_poly_zero((DC + CF) - (2 * AB - EC))
+
+  # AC^2 + BD^2 = (AE^2+EC^2) + (DF^2+BF^2)
+  lhs = AC * AC + BD * BD
+  rhs = (AE * AE + EC * EC) + (DF * DF + BF * BF)
+  assert ddb.check_poly_zero(lhs - rhs)
+
+  # (AE^2+EC^2) + (DF^2+BF^2) = 2AE^2 + EC^2 + DF^2
+  rhs2 = 2 * (AE * AE) + EC * EC + DF * DF
+  assert ddb.check_poly_zero(rhs - rhs2)
+
+
 def main():
   # Basic
   test_bridge_cong()
@@ -225,6 +304,11 @@ def main():
 
   # Eqratio
   test_eqratio_bridge()
+
+  # Pythagorean
+  test_pythagorean_from_perp()
+  test_pythagorean_not_for_nonright()
+  test_parallelogram_law()
 
   print("All poly tests passed!")
 

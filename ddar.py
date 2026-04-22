@@ -161,6 +161,11 @@ class DDAR:
         self.elim_poly.force_zero(p)
     elif pred.name == 'distseq':
       self.elim_dist_add.force_zero(self.pred_to_dist_add(pred))
+      poly = ep.Poly.zero(self.poly_env.nvars)
+      for i, coef in enumerate(pred.constants):
+        a, b = pred.points[2 * i : 2 * (i + 1)]
+        poly += coef * self.get_len_poly(a, b)
+      self.elim_poly.force_zero(poly)
     elif pred.name == 'cyclic':
       self.force_concyclic(pred.points, ())
     elif pred.name == 'cyclic_with_centers':
@@ -319,7 +324,7 @@ class DDAR:
       raise ValueError('Unexpected predicate:', pred.name)
 
   ####### Loop
-  def deduction_closure(self, verbose=False, progress_dot=True):
+  def deduction_closure(self, verbose=False, progress_dot=True, use_pythagorean = False):
     """Infers all further facts deducible on the given point."""
     # self.elim_dist_mul.core.display()
     changed = True
@@ -355,6 +360,14 @@ class DDAR:
       changed = changed or changed_last
       if verbose:
         print(['----', 'Updated'][changed_last])
+
+      if use_pythagorean:
+        if verbose:
+          print('  Pythagorean...             ', end='')
+        changed_last = self.search_pythagorean()
+        changed = changed or changed_last
+        if verbose:
+          print(['----', 'Updated'][changed_last])
 
       if verbose:
         print('  Merging points...          ', end='')
@@ -548,6 +561,33 @@ class DDAR:
                   ),
               )
           )
+
+    return changed
+
+  def search_pythagorean(self):
+    """Add Pythagorean equations for right triangles."""
+    changed = False
+    half_pi = self.elim_angle.const(1, 2)
+
+    for a, b, c in itertools.permutations(self.points, 3):
+      if (
+          self.num_identical(a, b)
+          or self.num_identical(a, c)
+          or self.num_identical(b, c)
+      ):
+        continue
+
+      ang = self.pair_to_dir[a, b] - self.pair_to_dir[a, c] - half_pi
+      ang = self.elim_angle.simplify(ang)
+      if not ang.is_zero():
+        continue
+
+      ab = self.get_len_poly(a, b)
+      ac = self.get_len_poly(a, c)
+      bc = self.get_len_poly(b, c)
+
+      poly = ab * ab + ac * ac - bc * bc
+      changed = self.elim_poly.force_zero(poly) or changed
 
     return changed
 
@@ -1072,7 +1112,7 @@ class DDAR:
     return self.elim_poly.check_zero(poly)
 
   def transfer_to_poly(self):
-    """Bridge known length equalities into polynomial domain."""
+    """Bridge known equalities into polynomial domain."""
     changed = False
 
     rep = {}
