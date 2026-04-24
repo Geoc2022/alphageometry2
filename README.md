@@ -1,3 +1,30 @@
+# AG2 + Generalized Gaussian Elimination
+
+Here AlphaGeometry2 is used alongside a generalized Gaussian elimination solver to solve some inequality based problems, building on the basic Gaussian elimination solver used in the original AlphaGeometry2. Essentially this allows AR to reason on problems that require inequalities instead of just equalities. For example, this version of AlphaGeometry2 can solve problems that require the triangle inequality.
+
+Tests for this extension are at [test_ineq.py](https://github.com/Geoc2022/alphageometry2/blob/ineq/test_ineq.py)
+
+## Getting Started
+
+This repo uses [`uv`](https://docs.astral.sh/uv/) to manage the environment. After cloning the repo, run the following to get set up.
+
+```bash
+uv sync
+source .venv/bin/activate
+```
+
+Now you can run the test file with:
+
+```bash
+python test_ineq.py
+```
+
+## References
+
+https://adriann.github.io/linear_optimization/fourier-motzkin.html
+
+http://article.sapub.org/10.5923.j.ajcam.20140406.04.html#Sec1
+
 # Gold-medalist Performance in Solving Olympiad Geometry with AlphaGeometry2
 
 We present AlphaGeometry2, a significantly improved version of AlphaGeometry
