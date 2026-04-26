@@ -285,6 +285,43 @@ def test_parallelogram_law():
   assert ddb.check_poly_zero(rhs - rhs2)
 
 
+def test_stewart_theorem():
+  s = (
+      "b@0_0 = ; d@3_0 = ; c@7_0 = ; h@2_0 = ; a@2_4 = "
+      "coll b d c, coll b h c, perp a h b c, "
+      "distseq b h h c b c 1 1 -1, distseq h d d c h c 1 1 -1, "
+      "distseq b h h d b d 1 1 -1"
+      "? coll b d c"
+  )
+  ddb, p = solve(s, use_pythagorean=True)
+  assert ddb.check_pred(p.goal)
+
+  a, b, c, d, h = (_pt(p, x) for x in ("a", "b", "c", "d", "h"))
+
+  AB = ddb.get_len_poly(a, b)
+  AC = ddb.get_len_poly(a, c)
+  AD = ddb.get_len_poly(a, d)
+  BD = ddb.get_len_poly(b, d)
+  DC = ddb.get_len_poly(d, c)
+  BC = ddb.get_len_poly(b, c)
+  BH = ddb.get_len_poly(b, h)
+  HC = ddb.get_len_poly(h, c)
+  HD = ddb.get_len_poly(h, d)
+  AH = ddb.get_len_poly(a, h)
+
+  assert ddb.check_poly_zero(BC - (BD + DC))
+  assert ddb.check_poly_zero(BC - (BH + HC))
+  assert ddb.check_poly_zero(DC - (HC - HD))
+  assert ddb.check_poly_zero(BD - (BH + HD))
+
+  assert ddb.check_poly_zero(AB * AB - (AH * AH + BH * BH))
+  assert ddb.check_poly_zero(AC * AC - (AH * AH + HC * HC))
+  assert ddb.check_poly_zero(AD * AD - (AH * AH + HD * HD))
+
+  # AC^2*BD + AB^2*DC = BC*(AD^2 + BD*DC)
+  stewart_poly = AC * AC * BD + AB * AB * DC - BC * (AD * AD + BD * DC)
+  assert ddb.check_poly_zero(stewart_poly)
+
 def main():
   # Basic
   test_bridge_cong()
@@ -309,6 +346,7 @@ def main():
   test_pythagorean_from_perp()
   test_pythagorean_not_for_nonright()
   test_parallelogram_law()
+  test_stewart_theorem()
 
   print("All poly tests passed!")
 

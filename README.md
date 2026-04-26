@@ -8,6 +8,10 @@ Now the system can derive the [Parallelogram law](https://en.wikipedia.org/wiki/
 
 In other words, the area of the blue squares is equal to the area of the red squares.
 
+The system can also derive [Stewart's theorem](https://en.wikipedia.org/wiki/Stewart%27s_theorem), which is a generalization of the Pythagorean theorem. Stewart's theorem states that for any triangle, and a cevian (a line segment from a vertex to a point on the opposite side), the following relationship holds:
+$$b^2 m + c^2 n = a(d^2 + mn)$$
+
+![stewart](https://upload.wikimedia.org/wikipedia/commons/thumb/c/cd/Stewarts_theorem.svg/3840px-Stewarts_theorem.svg.png)
 
 Tests for this extension are at [test_poly.py](https://github.com/Geoc2022/alphageometry2/blob/grobner/test_poly.py)
 
